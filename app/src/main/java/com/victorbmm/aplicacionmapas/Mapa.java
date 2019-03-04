@@ -1,0 +1,186 @@
+package com.victorbmm.aplicacionmapas;
+
+import android.app.Activity;
+import android.content.Intent;
+import android.graphics.Color;
+import android.location.Location;
+import android.os.Bundle;
+import android.support.annotation.NonNull;
+import android.support.design.widget.FloatingActionButton;
+import android.support.v7.app.AppCompatActivity;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.Toast;
+
+import com.mapbox.mapboxsdk.MapboxAccountManager;
+import com.mapbox.mapboxsdk.annotations.Marker;
+import com.mapbox.mapboxsdk.annotations.MarkerOptions;
+import com.mapbox.mapboxsdk.annotations.PolylineOptions;
+import com.mapbox.mapboxsdk.camera.CameraUpdate;
+import com.mapbox.mapboxsdk.camera.CameraUpdateFactory;
+import com.mapbox.mapboxsdk.geometry.LatLng;
+import com.mapbox.mapboxsdk.location.LocationServices;
+import com.mapbox.mapboxsdk.maps.MapView;
+import com.mapbox.mapboxsdk.maps.MapboxMap;
+import com.mapbox.mapboxsdk.maps.OnMapReadyCallback;
+import com.mapbox.services.Constants;
+import com.mapbox.services.commons.ServicesException;
+import com.mapbox.services.commons.geojson.LineString;
+import com.mapbox.services.commons.models.Position;
+import com.mapbox.services.directions.v4.DirectionsCriteria;
+import com.mapbox.services.directions.v4.MapboxDirections;
+import com.mapbox.services.directions.v4.models.DirectionsResponse;
+import com.mapbox.services.directions.v4.models.DirectionsRoute;
+import com.mapbox.services.directions.v4.models.Waypoint;
+
+import java.util.List;
+
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+
+public class Mapa extends AppCompatActivity implements MapboxMap.OnMarkerClickListener, View.OnClickListener, MapboxMap.OnMapClickListener {
+
+    MapView mapaView;
+    MapboxMap mapa;
+    FloatingActionButton ubicacion;
+    FloatingActionButton recorrido;
+    LocationServices servicioUbicacion;
+    Marker marker;
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        if(item.getItemId() == R.id.menu_nuevo_contacto){
+            Intent intent = new Intent(this, CrearEvento.class);
+            startActivity(intent);
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.menu_mapa, menu);
+        return true;
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        MapboxAccountManager.start(this, "pk.eyJ1IjoidmljdG9ydG9yaSIsImEiOiJjanNjNW81OWswaWZ5NDRxY2Z4OXN6em51In0.an5c1dHRSg6bHkSUvQhusw");
+
+        setContentView(R.layout.activity_mapa);
+
+        mapaView = findViewById(R.id.mapaView);
+        mapaView.onCreate(savedInstanceState);
+
+        mapaView.getMapAsync(new OnMapReadyCallback() {
+            @Override
+            public void onMapReady(MapboxMap mapboxMap) {
+                mapa = mapboxMap;
+                anadirListeners();
+                mapa.addMarker(new MarkerOptions().setTitle("voidMuyTofu").position(new LatLng(40.413700,-3.696685)).snippet("Vas a ir muy tofu"));
+            }
+        });
+
+        ubicacion = findViewById(R.id.btUbicacion);
+        recorrido = findViewById(R.id.btRecorrido);
+
+        ubicacion.setOnClickListener(this);
+        recorrido.setOnClickListener(this);
+
+        recorrido.setVisibility(View.INVISIBLE);
+
+        ubicarUsuario();
+    }
+
+    private void ubicarUsuario() {
+
+        servicioUbicacion = LocationServices.getLocationServices(this);
+
+    }
+
+    private void anadirListeners() {
+        mapa.setOnMarkerClickListener(this);
+        mapa.setOnMapClickListener(this);
+    }
+
+    @Override
+    public boolean onMarkerClick(@NonNull Marker marker) {
+        recorrido.setVisibility(View.VISIBLE);
+        this.marker = marker;
+        return false;
+    }
+
+    @Override
+    public void onClick(View view) {
+        if(view.getId() == R.id.btUbicacion){
+            System.out.println("dsada");
+            Location lastLocation = servicioUbicacion.getLastLocation();
+            if(lastLocation != null)
+                mapa.moveCamera(CameraUpdateFactory.newLatLngZoom(new LatLng(lastLocation), 15));
+            mapa.setMyLocationEnabled(true);
+        }
+
+        if(view.getId() == R.id.btRecorrido){
+
+            Waypoint posMarker = new Waypoint(marker.getPosition().getLongitude(),marker.getPosition().getLatitude());
+            Waypoint posUsuario = new Waypoint(servicioUbicacion.getLastLocation().getLongitude(),servicioUbicacion.getLastLocation().getLatitude());
+
+            MapboxDirections direccion = null;
+
+            try {
+                direccion = new MapboxDirections.Builder()
+                        .setOrigin(posMarker)
+                        .setDestination(posUsuario)
+                        .setProfile(DirectionsCriteria.PROFILE_CYCLING)
+                        .setAccessToken(MapboxAccountManager.getInstance().getAccessToken())
+                        .build();
+            } catch (ServicesException e) {
+                e.printStackTrace();
+            }
+
+            direccion.enqueueCall(new Callback<DirectionsResponse>() {
+                @Override
+                public void onResponse(Call<DirectionsResponse> call, Response<DirectionsResponse> response) {
+
+                    DirectionsRoute ruta = response.body().getRoutes().get(0);
+                    Toast.makeText(Mapa.this, "Distancia: " + ruta.getDistance() + " metros", Toast.LENGTH_SHORT).show();
+
+                    pintarRuta(ruta);
+                }
+
+                @Override
+                public void onFailure(Call<DirectionsResponse> call, Throwable throwable) {
+                    // Qué hacer en caso de que falle el cálculo de la ruta
+                }
+            });
+
+        }
+
+    }
+
+    private void pintarRuta(DirectionsRoute ruta) {
+        LineString lineString = LineString.fromPolyline(ruta.getGeometry(), Constants.OSRM_PRECISION_V5);
+        List<Position> coordenadas = lineString.getCoordinates();
+        LatLng[] puntos = new LatLng[coordenadas.size()];
+        for (int i = 0; i < coordenadas.size(); i++) {
+            puntos[i] = new LatLng(coordenadas.get(i).getLatitude(), coordenadas.get(i).getLongitude());
+        }
+
+        // Pinta los puntos en el mapa
+        mapa.addPolyline(new PolylineOptions()
+                .add(puntos)
+                .color(Color.BLACK)
+                .width(5));
+
+        // Resalta la posición del usuario si no lo estaba ya
+        if (!mapa.isMyLocationEnabled())
+            mapa.setMyLocationEnabled(true);
+    }
+
+    @Override
+    public void onMapClick(@NonNull LatLng point) {
+        recorrido.setVisibility(View.INVISIBLE);
+    }
+}
